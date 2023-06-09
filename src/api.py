@@ -1,13 +1,19 @@
 import logging
 import requests
-from typing import Optional
+from typing import Optional, Union
 
 from urllib.parse import urlparse, parse_qs, urlencode
 
 logger = logging.Logger(__name__)
 
 
-def combine_base_url_with_params(url: str, params: Optional[dict]) -> str:
+def combine_base_url_with_params(url: str, params: Optional[dict[str, Union[int, str]]]) -> str:
+    """
+    Gets url and param dict, returns encoded url with params
+    @param url: Base url
+    @param params: Dict of params (string to string or string to int)
+    @return: Encoded url with params
+    """
     if params is None:
         return url
     combined_url = url + "?" + urlencode(params)
@@ -33,13 +39,19 @@ class HseAppApi:
         "service",
     ]
 
-    DEFAULT_SEARCH_SCOPE: str = "all"
     DEFAULT_SEARCH_COUNT: int = 5
 
     # Email search
     BASE_URL_EMAIL_SEARCH = "https://api.hseapp.ru/v2/dump/email/{email}"
 
     def __init__(self, username: str, password: str, client_id: str):
+        """
+        Constructor for HseAppApi. Only stores the params,
+        token is requested in HseAppApi.auth()
+        @param username: User's login for auth.hse.ru
+        @param password: User's password for auth.hse.ru
+        @param client_id: Application client_id
+        """
         self.username: str = username
         self.password: str = password
         self.client_id: str = client_id
@@ -56,6 +68,10 @@ class HseAppApi:
         """
         Getting Bearer token for using HSE auth.
         May be can be simplified using https:// schema in redirect_uri.
+        @param username: User's login for auth.hse.ru
+        @param password: User's password for auth.hse.ru
+        @param client_id: Application client_id
+        @param session: Session, if defined, is used for auth
         """
 
         # 1. Base authorization
@@ -98,7 +114,7 @@ class HseAppApi:
         cookies = res_auth_post.cookies
 
         # 2. Getting code
-        # This request edirects to https://auth.hse.ru:443/adfs/oauth2/authorize,
+        # This request redirects to https://auth.hse.ru:443/adfs/oauth2/authorize,
         # but now includes client-request-id (ac708a1c-ab98-4ec3...) in query params
         url_auth_get = res_auth_post.headers["Location"]
         res_auth_get = session.get(url_auth_get, cookies=cookies, allow_redirects=False)
@@ -143,9 +159,19 @@ class HseAppApi:
         logger.debug("Auth success!")
 
     def has_session(self) -> bool:
-        return self.session is not None
+        """
+        Checks if auth is completed
+        @return: True, if HseAppApi instance has active session, False otherwise
+        """
+        return self.token is not None and self.session is not None
 
     def get_api_headers(self) -> dict[str, str]:
+        """
+        Returns headers for API requests, including auth token
+        @return: Headers dict
+        """
+        if not self.has_session():
+            raise ValueError("No opened session found! Use HseAppApi.auth() first.")
         token_header = "Bearer {token}".format(token=self.token)
         return {
             "accept-encoding": "gzip",
@@ -154,7 +180,14 @@ class HseAppApi:
             "user-agent": "HSE App X/1.18.1; release (SM-A515F; Android/11; ru_RU; 1080x2400)",
         }
 
-    def get_request(self, base_url: str, params: Optional[dict] = None):
+    def get_request(self, base_url: str, params: Optional[dict] = None) -> Union[list, dict]:
+        """
+        General function for GET API requests.
+        Computes headers and fetches base_url with query parameters `params`
+        @param base_url: Base url for request
+        @param params: Query params for request
+        @return: API request result
+        """
         if not self.has_session():
             raise ValueError("No opened session found! Use HseAppApi.auth() first.")
         logger.debug("Querying {url} with params {params}".format(
@@ -177,6 +210,13 @@ class HseAppApi:
         type_: Optional[str] = None,
         count: int = DEFAULT_SEARCH_COUNT,
     ) -> list[dict]:
+        """
+        Fuzzy search for query q
+        @param query: Text to search, may be student/staff full name, group title, auditorium title, etc.
+        @param type_: Search type. Should be comma-separated values from SEARCH_SCOPES
+        @param count: Number of results to return
+        @return: List of result dictionaries
+        """
         if type_ is None:
             type_ = ",".join(HseAppApi.SEARCH_SCOPES)
         else:
@@ -194,6 +234,11 @@ class HseAppApi:
         self,
         email: str,
     ) -> dict:
+        """
+        Exact search using user/staff email
+        @param email: Student or staff email to search
+        @return: Extended dict of student or staff data
+        """
         url = HseAppApi.BASE_URL_EMAIL_SEARCH.format(email=email)
         result = self.get_request(url)
         return result
